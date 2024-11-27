@@ -1,4 +1,4 @@
-# Projet n°2 de Deep Learning : Rétropropagation et Classification Logique
+# **Deep Learning - Rendu n°2 : Cas d'études**
 
 ## Elyes KHALFALLAH - 5230635
 
