@@ -2,7 +2,7 @@
 env
 
 Projet-1/results/
-Projet-1/__pycache__/
+*/__pycache__/
 
 requirements.txt
 td3.txt
