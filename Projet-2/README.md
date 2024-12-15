@@ -1,8 +1,8 @@
 # **Deep Learning - Rendu n°2 : Cas d'études**
 
-## Elyes KHALFALLAH - 5230635
+## Elyes KHALFALLAH & Nadia ACHATOUI
 
-### 13/12/2024
+### 16/12/2024
 
 ---
 

@@ -1,3 +1,4 @@
+# Imports utiles
 import numpy as np
 
 # -----------------------------------------------------------
@@ -187,52 +188,72 @@ class MLP:
             running_mean = momentum * running_mean + (1 - momentum) * batch_mean
             running_var = momentum * running_var + (1 - momentum) * batch_var
 
-            Z_norm = (Z - batch_mean) / np.sqrt(batch_var + 1e-8)  # Normalisation
+            Z_norm = (Z - batch_mean) / np.sqrt(
+                batch_var + 1e-8
+            )  # Normalisation des données du batch
         else:
-            Z_norm = (Z - running_mean) / np.sqrt(running_var + 1e-8)
+            Z_norm = (Z - running_mean) / np.sqrt(
+                running_var + 1e-8
+            )  # Normalisation en utilisant les moyennes cumulées
 
-        # Transformation linéaire avec gamma et beta
+        # Transformation linéaire avec les paramètres gamma (échelle) et beta (décalage)
         out = gamma * Z_norm + beta
         cache = (
-            Z,
-            Z_norm,
-            gamma,
-            beta,
+            Z,  # Entrée originale
+            Z_norm,  # Entrée normalisée
+            gamma,  # Paramètre d'échelle
+            beta,  # Paramètre de décalage
+            running_mean,  # Moyenne cumulative
+            running_var,  # Variance cumulative
+        )  # Cache pour les calculs de la passe arrière
+
+        return (
+            out,
+            cache,
             running_mean,
             running_var,
-        )  # Cache pour backward
-        return out, cache, running_mean, running_var
+        )  # Résultat de la passe avant, cache, moyennes et variances mises à jour
 
-    def _batchnorm_backward(self, dout, cache):
+    def _batchnorm_backward(self, dout, cache, training=False):
         """
         Passe arrière pour Batch Normalization.
         Calcule les gradients pour gamma, beta, et l'entrée Z.
         """
+        # Extraction des variables depuis le cache
         Z, Z_norm, gamma, beta, running_mean, running_var = cache
         N = Z.shape[0]  # Nombre d'échantillons dans le batch
 
-        dgamma = np.sum(dout * Z_norm, axis=0, keepdims=True)  # Gradient de gamma
-        dbeta = np.sum(dout, axis=0, keepdims=True)  # Gradient de beta
+        # Calcul du gradient de gamma (échelle)
+        dgamma = np.sum(
+            dout * Z_norm, axis=0, keepdims=True
+        )  # Somme des gradients pondérés par Z normalisé
+        # Calcul du gradient de beta (décalage)
+        dbeta = np.sum(dout, axis=0, keepdims=True)  # Somme des gradients directs
 
-        batch_var = np.var(Z, axis=0, keepdims=True)
-        batch_mean = np.mean(Z, axis=0, keepdims=True)
+        # Recalcul de la moyenne et de la variance du batch pour la passe arrière
+        batch_var = np.var(Z, axis=0, keepdims=True)  # Variance du batch
+        batch_mean = np.mean(Z, axis=0, keepdims=True)  # Moyenne du batch
 
-        # Gradients par rapport à Z
-        dZ_norm = dout * gamma
+        # Calcul du gradient par rapport à Z normalisé
+        dZ_norm = dout * gamma  # Contribution de gamma à la dérivée
+        # Gradient par rapport à la variance
         dvar = np.sum(
             dZ_norm * (Z - batch_mean) * (-0.5) * (batch_var + 1e-8) ** (-3 / 2),
             axis=0,
             keepdims=True,
         )
+        # Gradient par rapport à la moyenne
         dmean = np.sum(
             dZ_norm * (-1 / np.sqrt(batch_var + 1e-8)), axis=0, keepdims=True
         ) + dvar * np.mean(-2 * (Z - batch_mean), axis=0, keepdims=True)
+        # Gradient final par rapport à Z
         dZ = (
-            (dZ_norm / np.sqrt(batch_var + 1e-8))
-            + (dvar * 2 * (Z - batch_mean) / N)
-            + (dmean / N)
+            (dZ_norm / np.sqrt(batch_var + 1e-8))  # Contribution de la normalisation
+            + (dvar * 2 * (Z - batch_mean) / N)  # Contribution de la variance
+            + (dmean / N)  # Contribution de la moyenne
         )
 
+        # Retour des gradients calculés
         return dZ, dgamma, dbeta
 
     def _dropout_forward(self, A, training=True):
@@ -240,13 +261,18 @@ class MLP:
         Passe avant pour Dropout.
         En mode entraînement, applique le masque de dropout, sinon retourne les activations sans modification.
         """
+        # Vérifie si Dropout est activé et si l'on est en mode entraînement
         if self.dropout_rate > 0 and training:
-            mask = (np.random.rand(*A.shape) > self.dropout_rate).astype(
-                float
-            )  # Génère un masque
-            A_drop = A * mask / (1.0 - self.dropout_rate)  # Application du masque
-            return A_drop, mask
+            # Génération d'un masque aléatoire avec des valeurs 0 ou 1 en fonction du taux de dropout
+            mask = (np.random.rand(*A.shape) > self.dropout_rate).astype(float)
+            # Applique le masque aux activations et les renormalise pour conserver l'échelle
+            A_drop = A * mask / (1.0 - self.dropout_rate)
+            return (
+                A_drop,
+                mask,
+            )  # Retourne les activations avec dropout et le masque utilisé
         else:
+            # En mode test ou si dropout est désactivé, retourne les activations sans modification
             return A, None
 
     def forward(self, X, training=True):
@@ -254,45 +280,59 @@ class MLP:
         Passe avant dans le réseau, incluant BatchNorm, ReLU, et Dropout.
         Retourne les activations, caches, et masques de dropout.
         """
-        activations = [X]
-        caches = []
-        dropout_masks = []
+        activations = [X]  # Liste pour stocker les activations des couches
+        caches = []  # Liste pour stocker les caches pour la passe arrière
+        dropout_masks = []  # Liste pour stocker les masques de dropout
 
-        num_hidden_layers = len(self.layers) - 1
+        num_hidden_layers = len(self.layers) - 1  # Nombre de couches cachées
 
         for i in range(num_hidden_layers):
+            # Récupération des poids et biais de la couche courante
             W, b = self.layers[i]
+            # Activation de la couche précédente
             A_prev = activations[-1]
+            # Calcul des activations linéaires (Z = A_prev * W + b)
             Z = A_prev.dot(W) + b
 
             bn_cache = None
             if self.use_batchnorm:
-                gamma, beta = self.bn_params[i]
-                rm = self.bn_running_mean[i]
-                rv = self.bn_running_var[i]
+                # Si BatchNorm est activé, applique la normalisation
+                gamma, beta = self.bn_params[
+                    i
+                ]  # Paramètres gamma et beta pour BatchNorm
+                rm = self.bn_running_mean[i]  # Moyenne cumulative
+                rv = self.bn_running_var[i]  # Variance cumulative
                 Z_norm, bn_cache, rm_up, rv_up = self._batchnorm_forward(
                     Z, gamma, beta, rm, rv, training=training
                 )
+                # Mise à jour des moyennes et variances cumulées
                 self.bn_running_mean[i] = rm_up
                 self.bn_running_var[i] = rv_up
             else:
-                Z_norm = Z
+                Z_norm = Z  # Si pas de BatchNorm, Z reste inchangé
 
-            A = relu(Z_norm)  # ReLU activation
-            A_drop, mask = self._dropout_forward(A, training=training)  # Dropout
+            # Application de l'activation ReLU
+            A = relu(Z_norm)
+            # Application de Dropout (si activé)
+            A_drop, mask = self._dropout_forward(A, training=training)
 
-            caches.append((A_prev, W, b, Z, bn_cache))  # Stocke le cache pour backward
-            dropout_masks.append(mask)  # Stocke le masque de dropout
+            # Stocke les données nécessaires pour la passe arrière
+            caches.append((A_prev, W, b, Z, bn_cache))
+            # Stocke le masque de dropout pour la passe arrière
+            dropout_masks.append(mask)
+            # Ajoute les activations de la couche courante
             activations.append(A_drop)
 
         # Couche de sortie
-        W_out, b_out = self.layers[-1]
-        A_final = activations[-1].dot(W_out) + b_out
-        A_out = softmax(A_final)  # Sortie softmax
+        W_out, b_out = self.layers[-1]  # Poids et biais de la dernière couche
+        A_final = activations[-1].dot(W_out) + b_out  # Calcul des scores finaux
+        A_out = softmax(A_final)  # Application de la fonction softmax pour la sortie
+        # Stockage des données pour la passe arrière de la couche de sortie
         caches.append((activations[-1], W_out, b_out, A_final, None))
-        dropout_masks.append(None)
-        activations.append(A_out)
+        dropout_masks.append(None)  # Pas de masque de dropout pour la couche de sortie
+        activations.append(A_out)  # Ajoute les activations finales (sorties)
 
+        # Retourne les activations, caches, et masques de dropout
         return activations, caches, dropout_masks
 
     def backward(self, activations, caches, dropout_masks, y_true, training=True):
@@ -300,76 +340,90 @@ class MLP:
         Passe arrière pour calculer les gradients des paramètres du réseau.
         Inclut le traitement de Dropout et BatchNorm si activés.
         """
-        grads = []
-        y_true_oh = one_hot(
-            y_true, activations[-1].shape[1]
-        )  # Encode labels en one-hot
-        A_out = activations[-1]
-        delta = (A_out - y_true_oh) / len(y_true)  # Erreur pour la couche de sortie
+        grads = []  # Liste pour stocker les gradients des paramètres
+        # Conversion des labels y_true en one-hot encoding
+        y_true_oh = one_hot(y_true, activations[-1].shape[1])
+        A_out = activations[-1]  # Activations de la couche de sortie
+        # Calcul de l'erreur pour la couche de sortie
+        delta = (A_out - y_true_oh) / len(y_true)
 
-        # Couche de sortie
-        (A_prev, W_out, b_out, Z_out, _) = caches[-1]
-        dW_out = A_prev.T.dot(delta)
-        db_out = np.sum(delta, axis=0, keepdims=True)
-        grads.append((dW_out, db_out))
+        # Traitement pour la couche de sortie
+        (A_prev, W_out, b_out, Z_out, _) = caches[-1]  # Extraction des données du cache
+        dW_out = A_prev.T.dot(delta)  # Gradient des poids
+        db_out = np.sum(delta, axis=0, keepdims=True)  # Gradient des biais
+        grads.append((dW_out, db_out))  # Ajoute les gradients de la couche de sortie
+        delta = delta.dot(W_out.T)  # Propagation de l'erreur à la couche précédente
 
-        delta = delta.dot(W_out.T)
-
-        num_hidden_layers = len(self.layers) - 1
-        # Backpropagation sur les couches cachées
+        num_hidden_layers = len(self.layers) - 1  # Nombre de couches cachées
+        # Backpropagation pour les couches cachées
         for i in reversed(range(num_hidden_layers)):
-            (A_prev, W, b, Z, bn_cache) = caches[i]
-            mask = dropout_masks[i]
+            (A_prev, W, b, Z, bn_cache) = caches[i]  # Extraction des données du cache
+            mask = dropout_masks[i]  # Récupération du masque de dropout
 
             if self.dropout_rate > 0 and training:
-                delta = delta * mask / (1.0 - self.dropout_rate)  # Reverse Dropout
+                # Ajustement du delta avec le masque de dropout
+                delta = delta * mask / (1.0 - self.dropout_rate)
 
             if self.use_batchnorm:
-                # Backpropagation ReLU et BatchNorm
-                dZ_norm_relu = relu_deriv(Z) * delta
+                # Backpropagation combinée ReLU et BatchNorm
+                dZ_norm_relu = relu_deriv(Z) * delta  # Dérivée de ReLU combinée à delta
                 dZ, dgamma, dbeta = self._batchnorm_backward(
                     dZ_norm_relu, bn_cache, training=training
-                )
+                )  # Calcul des gradients avec BatchNorm
+                # Mise à jour des paramètres gamma et beta
                 gamma, beta = self.bn_params[i]
-                gamma -= dgamma * 0.001  # Mise à jour gamma
-                beta -= dbeta * 0.001  # Mise à jour beta
-                self.bn_params[i] = (gamma, beta)
+                gamma -= (
+                    dgamma * 0.001
+                )  # Mise à jour gamma avec un pas d'apprentissage fixe
+                beta -= (
+                    dbeta * 0.001
+                )  # Mise à jour beta avec un pas d'apprentissage fixe
+                self.bn_params[i] = (gamma, beta)  # Sauvegarde des nouveaux paramètres
             else:
-                dZ = relu_deriv(Z) * delta
+                dZ = relu_deriv(Z) * delta  # Dérivée de ReLU appliquée directement
 
-            dW = A_prev.T.dot(dZ)
-            db = np.sum(dZ, axis=0, keepdims=True)
-            grads.append((dW, db))
-            delta = dZ.dot(W.T)
+            dW = A_prev.T.dot(dZ)  # Gradient des poids
+            db = np.sum(dZ, axis=0, keepdims=True)  # Gradient des biais
+            grads.append((dW, db))  # Ajoute les gradients de la couche courante
+            delta = dZ.dot(W.T)  # Propagation de l'erreur à la couche précédente
 
-        grads.reverse()
-        return grads
+        grads.reverse()  # Inversion de l'ordre des gradients pour correspondre aux couches
+        return grads  # Retourne les gradients pour toutes les couches
 
     def update_params(self, grads, lr):
         """
         Met à jour les paramètres du réseau avec option de gradient clipping.
         """
         if self.clip_norm is not None:
-            total_norm = 0
+            total_norm = 0  # Variable pour stocker la norme totale des gradients
             for dW, db in grads:
+                # Accumulation de la somme des carrés des gradients
                 total_norm += np.sum(dW**2) + np.sum(db**2)
-            total_norm = np.sqrt(total_norm)
+            total_norm = np.sqrt(total_norm)  # Calcul de la norme L2 totale
             if total_norm > self.clip_norm:
-                ratio = self.clip_norm / (total_norm + 1e-8)
-                grads = [(dW * ratio, db * ratio) for (dW, db) in grads]
+                # Si la norme dépasse la limite, on ajuste les gradients
+                ratio = self.clip_norm / (total_norm + 1e-8)  # Ratio de réduction
+                grads = [
+                    (dW * ratio, db * ratio) for (dW, db) in grads
+                ]  # Application du ratio aux gradients
 
         for i in range(len(self.layers)):
+            # Récupération des paramètres de la couche courante
             W, b = self.layers[i]
-            dW, db = grads[i]
+            dW, db = grads[i]  # Gradients pour les poids et les biais
+            # Mise à jour des poids et des biais avec le taux d'apprentissage
             W -= lr * dW
             b -= lr * db
+            # Sauvegarde des nouveaux paramètres
             self.layers[i] = (W, b)
 
     def predict(self, X):
         """
         Effectue une passe avant et retourne les prédictions.
         """
+        # Passe avant en mode test (training=False) et récupération de la sortie
         A_out = self.forward(X, training=False)[0][-1]
+        # Retourne les indices des classes avec la plus grande probabilité (prédictions)
         return np.argmax(A_out, axis=1)
 
 
