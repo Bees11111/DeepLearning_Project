@@ -28,8 +28,10 @@
      source env/bin/activate
      ```
 
-3. **Installer les dépendances :** elles ne sont pas nombreuses (numpy et matplotlib)
+3. **Installer les dépendances :**
 
    ```bash
    pip install -r .\Projet-2\requirements.txt
    ```
+
+4. **Lancez ensuite les codes au choix parmi les .ipynb disponibles**

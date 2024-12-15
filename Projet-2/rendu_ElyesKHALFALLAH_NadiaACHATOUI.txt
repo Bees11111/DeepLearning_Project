@@ -1,0 +1,9 @@
+Bonsoir M Velcin,
+
+Vous trouverez le repo GitHub de notre projet au lien suivant.
+La partie intéressante se retrouve dans le dossier "Projet-2" (code, rapport, README, requirements, prédictions demandées en csv) :
+
+https://github.com/Bees11111/DeepLearning_Project
+
+Bonne soirée,
+Elyes KHALFALLAH & Nadia ACHATOUI
